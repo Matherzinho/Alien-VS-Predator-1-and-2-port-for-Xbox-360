@@ -1,0 +1,5 @@
+// avp360: <hash_set> do STLport/SGI que o AvP2 usava, sobre o __gnu_cxx::hash_set do GCC.
+#ifndef AVP360_HASH_SET
+#define AVP360_HASH_SET
+#include "avp360_hash.h"
+#endif

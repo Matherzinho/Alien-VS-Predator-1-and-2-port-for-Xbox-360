@@ -1,0 +1,945 @@
+diff -ruN --binary a/include/d3dren/drawpolymgr.h b/include/d3dren/drawpolymgr.h
+--- a/include/d3dren/drawpolymgr.h	2026-11-05 12:26:25.647393499 -0300
++++ b/include/d3dren/drawpolymgr.h	2026-11-05 12:26:26.297788946 -0300
+@@ -207,9 +207,11 @@
+ 
+ typedef char DPM_CheckMaterial[(sizeof(Material) == 0x1cc) ? 1 : -1];
+ typedef char DPM_CheckInstance[(sizeof(UnkType_DPMMaterialInstance) == 0x59c) ? 1 : -1];
++#if !defined(AVP_XBOX360)	// avp360: ponteiros para funcao-membro tem 8 bytes no GCC; nada le estes membros por offset
+ typedef char DPM_Check768[(offsetof(DrawPolyMgr, m_Unk768) == 0x768) ? 1 : -1];
+ typedef char DPM_Check7bc[(offsetof(DrawPolyMgr, m_Unk7bc) == 0x7bc) ? 1 : -1];
+ typedef char DPM_Check7d4[(offsetof(DrawPolyMgr, m_Unk7d4) == 0x7d4) ? 1 : -1];
++#endif
+ 
+ // GLOBAL: D3DREN 0x1006ec40
+ extern DrawPolyMgr g_DrawPolyMgr;
+diff -ruN --binary a/include/d3dren/fixedpoint.h b/include/d3dren/fixedpoint.h
+--- a/include/d3dren/fixedpoint.h	2026-11-05 12:26:25.647417936 -0300
++++ b/include/d3dren/fixedpoint.h	2026-11-05 12:26:26.299854397 -0300
+@@ -8,6 +8,10 @@
+ // Jupiter's drawlinesystem.cpp.
+ inline int RoundFloatToInt(float f)
+ {
++#if defined(AVP_XBOX360)
++	// avp360: fistp arredonda para o mais proximo (modo padrao da FPU x87), como lrintf.
++	return (int)lrintf(f);
++#else
+ 	int nResult;
+ 	__asm
+ 	{
+@@ -15,6 +19,7 @@
+ 		fistp nResult
+ 	}
+ 	return nResult;
++#endif
+ }
+ 
+ #endif
+diff -ruN --binary a/include/d3dren/tlvertex.h b/include/d3dren/tlvertex.h
+--- a/include/d3dren/tlvertex.h	2026-11-05 12:26:25.647577459 -0300
++++ b/include/d3dren/tlvertex.h	2026-11-05 12:26:26.295660961 -0300
+@@ -9,10 +9,19 @@
+ // bytes in the order +0x12 (r), +0x11 (g), +0x10 (b), +0x13 (a), which is a TLRGB's r, g, b, a).
+ struct TLRGB
+ {
++#if defined(AVP_XBOX360)
++	// avp360: big-endian. O codigo escreve a cor ora campo a campo, ora como uint32 0xAARRGGBB (D3DCOLOR); com os bytes
++	// nesta ordem as duas formas concordam no PowerPC, como b,g,r,a concordam no x86.
++	uint8	a;
++	uint8	r;
++	uint8	g;
++	uint8	b;
++#else
+ 	uint8	b;
+ 	uint8	g;
+ 	uint8	r;
+ 	uint8	a;
++#endif
+ };
+ // NAME: RGBColor: Jupiter render_a/src/sys/d3d/3d_ops.h `struct RGBColor { union { TLRGB rgb; uint32 color; }; }`.
+ struct RGBColor
+diff -ruN --binary a/src/client/clientmgr.cpp b/src/client/clientmgr.cpp
+--- a/src/client/clientmgr.cpp	2026-11-05 12:26:25.648653162 -0300
++++ b/src/client/clientmgr.cpp	2026-11-05 12:26:25.731277830 -0300
+@@ -32,8 +32,11 @@
+ #include "servermgr.h"
+ #include "model.h"
+ #include "../../build/proj/LT2/lithshared/stdlith/struct_bank.h"
++#if !defined(AVP_XBOX360)
++// No Xbox 360 nao ha WON (autenticacao online); o jogo local nao precisa dela.
+ #include "WONAuth/AuthContext.h"
+ #include "WONAuth/PeerAuthClient.h"
++#endif
+ 
+ #define CMD_USERCOMMAND		(1<<0)
+ #define CMSG_HELLO			5
+@@ -42,7 +45,9 @@
+ #define MUSIC_IMMEDIATE		0
+ 
+ 
++#if !defined(AVP_XBOX360)
+ using namespace WONAPI;
++#endif
+ 
+ 
+ // ------------------------------------------------------------------ //
+@@ -126,6 +131,10 @@
+ // Globals.
+ // ------------------------------------------------------------------ //
+ 
++#if defined(AVP_XBOX360)
++static void *g_pAuthContext;
++ObjectBank<LTLink> g_DLinkBank(64, 1024);
++#else
+ // GLOBAL: LITHTECH 0x004def68
+ SmartPtr<AuthContext> g_pAuthContext;
+ 
+@@ -136,6 +145,7 @@
+ 
+ // GLOBAL: LITHTECH 0x004def94
+ PeerAuthClient *g_pPeerAuthClient;
++#endif
+ 
+ // Timing information
+ // GLOBAL: LITHTECH 0x004def98
+@@ -153,7 +163,11 @@
+ // emit CSegment's and CStyle's vector deleting destructors (0x00414750, 0x004147e0). Its six static
+ // CLithChunkAllocator members each use up a static-initializer number, so the original included it
+ // after the globals above (their _$E29.._$E42 numbers leave no room before them).
++#if defined(AVP_XBOX360)
++#include "ltdirectmusic_xbox.h"
++#else
+ #include "ltdirectmusic_impl.h"
++#endif
+ 
+ // The WONAPI headers (via <string>) use up 28 static initializer numbers first.
+ // FUNCTION: LITHTECH 0x0040fa60 _$E32
+@@ -194,6 +208,14 @@
+ 
+ 	// Init the renderer.
+ 	memset(pMode, 0, sizeof(*pMode));
++#if defined(AVP_XBOX360)
++	// avp360: o Xbox apresenta em 1280x720 e o renderizador Xenos so oferece esse modo; o autoexec.cfg do PC pode pedir
++	// outro. As variaveis acompanham, para o jogo posicionar o HUD e os menus pela tela de verdade.
++	g_ScreenWidth = 1280;
++	g_ScreenHeight = 720;
++	if (g_CV_BitDepth != 16)
++		g_CV_BitDepth = 32;
++#endif
+ 	pMode->m_Width = g_ScreenWidth;
+ 	pMode->m_Height = g_ScreenHeight;
+ 	pMode->m_BitDepth = g_CV_BitDepth;
+@@ -377,6 +399,9 @@
+ // FUNCTION: LITHTECH 0x00410050
+ void CClientMgr::StartPeerAuth()
+ {
++#if defined(AVP_XBOX360)
++	return;
++#else
+ 	g_pAuthContext = (AuthContext*)m_pClientShell->GetAuthContext();
+ 	if(g_pAuthContext.get())
+ 	{
+@@ -393,6 +418,7 @@
+ 		cPacket->WriteRaw((void*)outMsg->data(), (uint16)outMsg->length());
+ 		m_NetMgr.SendPacket(cPacket, m_pCurShell->m_HostID, MESSAGE_GUARANTEED);
+ 	}
++#endif
+ }
+ 
+ 
+@@ -400,6 +426,10 @@
+ // FUNCTION: LITHTECH 0x004101c0
+ void CClientMgr::OnPeerAuthPacket(CPacket *pPacket)
+ {
++#if defined(AVP_XBOX360)
++	(void)pPacket;
++	g_pAuthContext = LTNULL;
++#else
+ 	char buf[512];
+ 	uint32 len;
+ 
+@@ -425,6 +455,7 @@
+ 	{
+ 		g_pAuthContext = LTNULL;
+ 	}
++#endif
+ }
+ 
+ 
+diff -ruN --binary a/src/client/consolecommands.cpp b/src/client/consolecommands.cpp
+--- a/src/client/consolecommands.cpp	2026-11-05 12:26:25.648288248 -0300
++++ b/src/client/consolecommands.cpp	2026-11-05 12:26:25.701705036 -0300
+@@ -701,7 +701,7 @@
+ 	while ( !feof( fInput ) )
+ 	{
+ 		// Read a line from the file
+-		if ( fgets( aBuffer, MAX_CONSOLE_TEXTLEN, fInput ) > 0 )
++		if ( fgets( aBuffer, MAX_CONSOLE_TEXTLEN, fInput ) != NULL )
+ 		{
+ 			int iLength = strlen( aBuffer );
+ 			// Remove trailing newlines
+diff -ruN --binary a/src/d3dren/shared/pixelformat.cpp b/src/d3dren/shared/pixelformat.cpp
+--- a/src/d3dren/shared/pixelformat.cpp	2026-11-05 12:26:25.649090646 -0300
++++ b/src/d3dren/shared/pixelformat.cpp	2026-11-05 12:26:26.143340102 -0300
+@@ -7,6 +7,9 @@
+ // colour tables, and the pixelformat object (engine twin src/shared/pixelformat.cpp).  Several original objects: size
+ // objects (packed COMDATs, no padding), so FLAGS /O1 /Ob2 for all of them.
+ #include <windows.h>
++// avp360: os blocos DXT sao little-endian (no x86, estes sao os *(uint16*) / *(uint32*) originais).
++#define PF_LE16(p) ((uint16)(((const uint8*)(p))[0] | (((const uint8*)(p))[1] << 8)))
++#define PF_LE32(p) ((uint32)(((const uint8*)(p))[0] | (((const uint8*)(p))[1] << 8) | (((const uint8*)(p))[2] << 16) | ((uint32)((const uint8*)(p))[3] << 24)))
+ #include <string.h>
+ #include <mmsystem.h>
+ #include "d3dren/lightmap.h"
+@@ -831,8 +834,8 @@
+ 			pSrcPos16 = (uint16*)pSrcPos8;
+ 
+ 			// 16-bit 565 values.
+-			val1 = *pSrcPos16;
+-			val2 = *(pSrcPos16 + 1);
++			val1 = PF_LE16(pSrcPos16);
++			val2 = PF_LE16(pSrcPos16 + 1);
+ 
+ 			// Convert to base format.
+ 			cc16toBF.Convert((uint8*)&val1, (uint8*)&ident32[0]);
+@@ -879,7 +882,7 @@
+ 			ccBFtoGeneric.Convert((uint8*)&ident32[3], (uint8*)&abstract.m_Ident[3]);
+ 
+ 			// The next 4 bytes are the pixel data.
+-			blockData = *((uint32*)(pSrcPos8 + 4));
++			blockData = PF_LE32(pSrcPos8 + 4);
+ 			pDestPos = pRequest->m_pDest +
+ 				((yBlock<<2) * pRequest->m_DestPitch) + (xBlock<<(2+A::GetShift()));
+ 
+@@ -934,8 +937,8 @@
+ 					ALPHAVAL[7] = pAlphaScaleTable[ALPHAVAL[7]] << alphaShift;
+ 
+ 					// 6 bytes for the pixels (3 bits per pixel, 16 pixels).
+-					alphaData[0] = *((uint32*)(pSrcPos8+2));
+-					alphaData[1] = *((uint16*)(pSrcPos8+6));
++					alphaData[0] = PF_LE32(pSrcPos8 + 2);
++					alphaData[1] = PF_LE16(pSrcPos8 + 6);
+ 
+ 					// Row 1.
+ 						READROW_NORMAL(0, 0);
+@@ -961,10 +964,10 @@
+ 				else
+ 				{
+ 					// 2 rows worth.
+-					blockData = *((uint32*)pSrcPos8);
++					blockData = PF_LE32(pSrcPos8);
+ 					DECODE_ALPHA_2ROWS();
+ 
+-					blockData = *((uint32*)(pSrcPos8 + 4));
++					blockData = PF_LE32(pSrcPos8 + 4);
+ 					DECODE_ALPHA_2ROWS();
+ 				}
+ 			}
+diff -ruN --binary a/src/d3dren/sys/d3d/common_draw.cpp b/src/d3dren/sys/d3d/common_draw.cpp
+--- a/src/d3dren/sys/d3d/common_draw.cpp	2026-11-05 12:26:25.649164350 -0300
++++ b/src/d3dren/sys/d3d/common_draw.cpp	2026-11-05 12:26:26.109317929 -0300
+@@ -585,12 +585,14 @@
+ 	short control;
+ 
+ 	// d3d_SetFPState (Jupiter common_draw.h): lower the floating point precision to speed up multiplies and divides.
++#if !defined(AVP_XBOX360)	// avp360: o PowerPC nao tem a precisao da FPU x87 para baixar
+ 	_asm
+ 	{
+ 		fstcw	control
+ 		and	control, 0xfcff
+ 		fldcw	control
+ 	}
++#endif
+ 
+ 	d3d_ReadConsoleVariables();
+ 
+diff -ruN --binary a/src/d3dren/sys/d3d/setupmodel.cpp b/src/d3dren/sys/d3d/setupmodel.cpp
+--- a/src/d3dren/sys/d3d/setupmodel.cpp	2026-11-05 12:26:25.649776923 -0300
++++ b/src/d3dren/sys/d3d/setupmodel.cpp	2026-11-05 12:26:26.134143226 -0300
+@@ -535,7 +535,12 @@
+ 
+ 	if (m_pModel->m_bNormalRef)
+ 	{
++#if defined(AVP_XBOX360)	// avp360: o LTMatrix::operator* do SDK pede referencia nao-const (o VC6 aceitava o temporario)
++		LTMatrix mNormalRef = m_InvTransform * m_pModel->m_Transforms[m_pModel->m_iNormalRefNode] * m_pModel->m_mNormalRef;
++		mInvTransform = m_ModelTransform * mNormalRef;
++#else
+ 		mInvTransform = m_ModelTransform * (m_InvTransform * m_pModel->m_Transforms[m_pModel->m_iNormalRefNode] * m_pModel->m_mNormalRef);
++#endif
+ 		if (m_pInstance->m_Flags & FLAG_REALLYCLOSE)
+ 			mInvTransform = g_ViewParams.m_mInvView * mInvTransform;
+ 		mInvTransform = ~mInvTransform;
+diff -ruN --binary a/src/d3dren/unk/100323f9.cpp b/src/d3dren/unk/100323f9.cpp
+--- a/src/d3dren/unk/100323f9.cpp	2026-11-05 12:26:25.650123714 -0300
++++ b/src/d3dren/unk/100323f9.cpp	2026-11-05 12:26:26.198435344 -0300
+@@ -162,7 +162,16 @@
+ 	pEnd = (uint32 *)((uint8 *)pIn + nBytes);
+ 	while (pCur < pEnd)
+ 	{
++#if defined(AVP_XBOX360)
++		// avp360: texel little-endian do mundo (e desalinhado depois de cada contagem): lido byte a byte.
++		{
++			const uint8 *b = (const uint8 *)pCur;
++			dwTexel = b[0] | (b[1] << 8) | (b[2] << 16) | ((uint32)b[3] << 24);
++			pCur++;
++		}
++#else
+ 		dwTexel = *pCur++;
++#endif
+ 		if (dwTexel & 0x80000000)
+ 		{
+ 			nCount = *(uint8 *)pCur;
+diff -ruN --binary a/src/d3dren/unk/100329b0.cpp b/src/d3dren/unk/100329b0.cpp
+--- a/src/d3dren/unk/100329b0.cpp	2026-11-05 12:26:25.650159626 -0300
++++ b/src/d3dren/unk/100329b0.cpp	2026-11-05 12:26:26.191069612 -0300
+@@ -21,6 +21,9 @@
+ // gets a descriptive local name.
+ inline int MulHigh(int a, int b)
+ {
++#if defined(AVP_XBOX360)
++	return (int)(((long long)a * b) >> 32);
++#else
+ 	int nResult;
+ 	__asm
+ 	{
+@@ -29,6 +32,7 @@
+ 		mov nResult, edx
+ 	}
+ 	return nResult;
++#endif
+ }
+ 
+ // guess: the context of one dynamic light on one polygon's lightmap (0x64 bytes, a stack object of FUN_10032c40 and
+diff -ruN --binary a/src/kernel/sys/win/dsys_interface.cpp b/src/kernel/sys/win/dsys_interface.cpp
+--- a/src/kernel/sys/win/dsys_interface.cpp	2026-11-05 12:26:25.650858938 -0300
++++ b/src/kernel/sys/win/dsys_interface.cpp	2026-11-05 12:26:25.927779762 -0300
+@@ -426,6 +426,11 @@
+ 
+ 	pList = LTNULL;
+ 
++#if defined(AVP_XBOX360)
++	// avp360: o renderizador (Xenos) esta linkado no .xex; o LoadLibrary do shim o acha pelo nome.
++	dsi_GetDLLModes((char *)"d3d.ren", &pList);
++	return pList;
++#endif
+ 	handle = _findfirst("*.ren", &data);
+ 	if(handle != -1)
+ 	{
+diff -ruN --binary a/src/kernel/sys/win/load_pcx.cpp b/src/kernel/sys/win/load_pcx.cpp
+--- a/src/kernel/sys/win/load_pcx.cpp	2026-11-05 12:26:25.650923314 -0300
++++ b/src/kernel/sys/win/load_pcx.cpp	2026-11-05 12:26:25.916737044 -0300
+@@ -39,6 +39,17 @@
+ 
+ 	// Read in the header.
+ 	STREAM_READ(pcxHdr);
++#if defined(AVP_XBOX360)
++	// avp360: PCX little-endian
++	avp360_FixEndian(pcxHdr.x0);
++	avp360_FixEndian(pcxHdr.y0);
++	avp360_FixEndian(pcxHdr.x1);
++	avp360_FixEndian(pcxHdr.y1);
++	avp360_FixEndian(pcxHdr.xDPI);
++	avp360_FixEndian(pcxHdr.yDPI);
++	avp360_FixEndian(pcxHdr.bytesPerLine);
++	avp360_FixEndian(pcxHdr.paletteInfo);
++#endif
+ 	if(pcxHdr.bitsPerPixel != 8)
+ 	{
+ 		return LTFALSE;
+diff -ruN --binary a/src/lithshared/rezmgr/rezmgr.cpp b/src/lithshared/rezmgr/rezmgr.cpp
+--- a/src/lithshared/rezmgr/rezmgr.cpp	2026-11-05 12:26:25.652429049 -0300
++++ b/src/lithshared/rezmgr/rezmgr.cpp	2026-11-05 12:26:25.993592071 -0300
+@@ -52,6 +52,21 @@
+   BYTE  IsSorted;           // If 0 then data is not sorted if 1 then it is sorted
+ };
+ 
++#if defined(AVP_XBOX360)
++// avp360: o .rez e little-endian. Os DWORDs do cabecalho sao trocados logo depois da leitura (e antes da escrita), e
++// os dos blocos de diretorio sao lidos por REZ_LE32.
++static inline DWORD REZ_LE32(const BYTE *p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((DWORD)p[3] << 24); }
++static void RezSwapHeader(FileMainHeaderStruct &h)
++{
++  DWORD *f[] = { &h.FileFormatVersion, &h.RootDirPos, &h.RootDirSize, &h.RootDirTime, &h.NextWritePos, &h.Time,
++    &h.LargestKeyAry, &h.LargestDirNameSize, &h.LargestRezNameSize, &h.LargestCommentSize };
++  for (unsigned i = 0; i < sizeof f / sizeof f[0]; i++) *f[i] = REZ_LE32((const BYTE *)f[i]);
++}
++#define REZ_DWORD(p) REZ_LE32((const BYTE *)(p))
++#else
++#define REZ_DWORD(p) (*(DWORD*)(p))
++#endif
++
+ enum FileDirEntryType {
+   ResourceEntry = 0,
+   DirectoryEntry = 1
+@@ -857,7 +872,7 @@
+   while (pCur < pEnd) {
+ 
+     // if this is a directory entry
+-    if ((*(DWORD*)pCur) == DirectoryEntry) {
++    if (REZ_DWORD(pCur) == DirectoryEntry) {
+       pCur += sizeof(DWORD);
+ 
+       // variables to store data read in
+@@ -867,11 +882,11 @@
+       char* sDirName;
+ 
+       // convert simple header variables
+-      Pos = (*(DWORD*)pCur);
++      Pos = REZ_DWORD(pCur);
+       pCur += sizeof(DWORD);
+-      Size = (*(DWORD*)pCur);
++      Size = REZ_DWORD(pCur);
+       pCur += sizeof(DWORD);
+-      Time = (*(DWORD*)pCur);
++      Time = REZ_DWORD(pCur);
+       pCur += sizeof(DWORD);
+ 
+       // convert dir name
+@@ -898,7 +913,7 @@
+ 
+     // if this is a resource item entry
+     else {
+-      ASSERT((*(DWORD*)pCur) == ResourceEntry); // Type is not a resource or a directory!!!!
++      ASSERT(REZ_DWORD(pCur) == ResourceEntry); // Type is not a resource or a directory!!!!
+       pCur += sizeof(DWORD);
+ 
+       // variables to store data read in
+@@ -913,17 +928,17 @@
+       DWORD* pKeyAry;
+ 
+       // convert simple header variables
+-      Pos = (*(DWORD*)pCur);
++      Pos = REZ_DWORD(pCur);
+       pCur += sizeof(DWORD);
+-      Size = (*(DWORD*)pCur);
++      Size = REZ_DWORD(pCur);
+       pCur += sizeof(DWORD);
+-      Time = (*(DWORD*)pCur);
++      Time = REZ_DWORD(pCur);
+       pCur += sizeof(DWORD);
+-      ID = (*(DWORD*)pCur);
++      ID = REZ_DWORD(pCur);
+       pCur += sizeof(DWORD);
+-      Type = (*(DWORD*)pCur);
++      Type = REZ_DWORD(pCur);
+       pCur += sizeof(DWORD);
+-      NumKeys = (*(DWORD*)pCur);
++      NumKeys = REZ_DWORD(pCur);
+       pCur += sizeof(DWORD);
+ 
+       // convert item name
+@@ -961,7 +976,7 @@
+         pKeyAry = new REZKEYVAL[NumKeys];
+         ASSERT(pKeyAry != NULL);
+         for (unsigned int i = 0; i < NumKeys; i++) {
+-          pKeyAry[i] = *(DWORD*)pCur;
++          pKeyAry[i] = REZ_DWORD(pCur);
+           pCur += sizeof(DWORD);
+         }
+       }
+@@ -1211,6 +1226,9 @@
+     // read in the header
+     FileMainHeaderStruct Header;
+     pRezFile->Read(0,0,sizeof(Header),&Header);
++#if defined(AVP_XBOX360)
++    RezSwapHeader(Header);
++#endif
+ 
+     // store header values in RezMgr class
+     m_nNextWritePos =       Header.NextWritePos;
+@@ -1321,6 +1339,9 @@
+   // read in the header
+   FileMainHeaderStruct Header;
+   pRezFile->Read(0,0,sizeof(Header),&Header);
++#if defined(AVP_XBOX360)
++  RezSwapHeader(Header);
++#endif
+ 
+   // store header values in RezMgr class
+   if (Header.LargestKeyAry > m_nLargestKeyAry) m_nLargestKeyAry = Header.LargestKeyAry;
+diff -ruN --binary a/src/model/model_load.cpp b/src/model/model_load.cpp
+--- a/src/model/model_load.cpp	2026-11-05 12:26:25.651474292 -0300
++++ b/src/model/model_load.cpp	2026-11-05 12:26:25.977824248 -0300
+@@ -66,7 +66,14 @@
+ 		return LTFALSE;
+ 
+ 	for(i=0; i < m_pAnim->m_KeyFrames.GetSize(); i++)
++	{
+ 		file.Read(&m_KeyFrames[i], sizeof(NodeKeyFrame));
++#if defined(AVP_XBOX360)
++		// avp360: translacao e quaternio, so floats little-endian
++		for(uint32 w=0; w < sizeof(NodeKeyFrame) / 4; w++)
++			avp360_ByteSwap((uint8*)&m_KeyFrames[i] + w*4, 4);
++#endif
++	}
+ 
+ 	if(!m_Children.SetSizeInit4(m_pNode->NumChildren(), LTNULL, GetModel()->GetAlloc()))
+ 		return LTFALSE;
+diff -ruN --binary a/src/server/game_serialize.cpp b/src/server/game_serialize.cpp
+--- a/src/server/game_serialize.cpp	2026-11-05 12:26:25.652094744 -0300
++++ b/src/server/game_serialize.cpp	2026-11-05 12:26:26.048668951 -0300
+@@ -1012,3 +1012,19 @@
+ 	pStream->SeekTo(nextObjectPos);
+ 	return LT_OK;
+ }
++
++#if defined(AVP_XBOX360)
++// avp360: os metodos que o CLTMessage_Stream compartilha com o LMessageImpl, gerados de shared/lmessage.cpp pelo
++// CMake (gen/lmessage_stream.inc): mesmo codigo, so que lendo e escrevendo pelo stream e com o helper do servidor.
++#include "lmessage.h"
++#include "impl_common.h"
++#include "stringmgr.h"
++#define GetHelper() (m_pHelper)
++#include "lmessage_stream.inc"
++#undef GetHelper
++
++LTBOOL CLTMessage_Stream::IsInvalid()
++{
++	return m_pStream == LTNULL;
++}
++#endif
+diff -ruN --binary a/src/server/s_client.cpp b/src/server/s_client.cpp
+--- a/src/server/s_client.cpp	2026-11-05 12:26:25.652166046 -0300
++++ b/src/server/s_client.cpp	2026-11-05 12:26:26.050129831 -0300
+@@ -1154,7 +1154,11 @@
+ 
+ 	if (g_CV_DelimitPackets)
+ 	{
++#if defined(AVP_XBOX360)
++		pServerMgr->m_pTracePacketFile->Write("*END*", 5);
++#else
+ 		*pServerMgr->m_pTracePacketFile << '*' << 'E' << 'N' << 'D' << '*';
++#endif
+ 	}
+ }
+ 
+diff -ruN --binary a/src/server/servermgr.cpp b/src/server/servermgr.cpp
+--- a/src/server/servermgr.cpp	2026-11-05 12:26:25.651746581 -0300
++++ b/src/server/servermgr.cpp	2026-11-05 12:26:26.046512254 -0300
+@@ -31,8 +31,11 @@
+ #include "s_client.h"
+ #include "server_extradata.h"
+ #include "fullintersectline.h"
++#if !defined(AVP_XBOX360)
++// No Xbox 360 nao ha WON: o servidor local responde como "sem autenticacao" (OnPeerToPeerAuthPacket).
+ #include "WONAuth/AuthContext.h"
+ #include "WONAuth/PeerAuthServer.h"
++#endif
+ 
+ #define SMSG_PEERAUTH		27
+ 
+@@ -194,7 +197,12 @@
+ // use up 28 static initializer numbers first.
+ // ----------------------------------------------------------------------- //
+ 
++#if defined(AVP_XBOX360)
++class AuthContext;
++static void *g_pServerAuthContext;
++#else
+ using namespace WONAPI;
++#endif
+ 
+ // FUNCTION: LITHTECH 0x004821c0 _$E32
+ // FUNCTION: LITHTECH 0x004821d0 _$E29
+@@ -203,7 +211,9 @@
+ // GLOBAL: LITHTECH 0x004e5d98
+ // Extern, not static: CServerMgr::Init's release of it only matches that way (the name is unknown; the
+ // client's g_pAuthContext is a different global).
++#if !defined(AVP_XBOX360)
+ SmartPtr<AuthContext> g_pServerAuthContext;
++#endif
+ 
+ 
+ // ----------------------------------------------------------------------- //
+@@ -3050,6 +3060,13 @@
+ // FUNCTION: LITHTECH 0x00487010
+ void CServerMgr::OnPeerToPeerAuthPacket(Client *pClient, CPacket *pPacket)
+ {
++#if defined(AVP_XBOX360)
++	(void)pPacket;
++	CPacketRef cNoAuth = packet_Get(MAX_PACKET_LEN, MAX_PACKET_LEN);
++	cNoAuth->m_Data[0] = SMSG_PEERAUTH;
++	m_NetMgr.SendPacket(cNoAuth, pClient->m_ConnectionID, MESSAGE_GUARANTEED);
++	return;
++#else
+ 	PeerAuthServer authServer;
+ 	char buf[512];
+ 	uint32 len;
+@@ -3095,6 +3112,7 @@
+ 		cPacket->m_Data[0] = SMSG_PEERAUTH;
+ 		m_NetMgr.SendPacket(cPacket, pClient->m_ConnectionID, MESSAGE_GUARANTEED);
+ 	}
++#endif
+ }
+ 
+ // Template code the peer auth leaves behind.
+diff -ruN --binary a/src/server/s_object.cpp b/src/server/s_object.cpp
+--- a/src/server/s_object.cpp	2026-11-05 12:26:25.651838855 -0300
++++ b/src/server/s_object.cpp	2026-11-05 12:26:26.052863097 -0300
+@@ -462,6 +462,9 @@
+ 			else
+ 			{
+ 				pStream->Read(pProp->m_Data, propLen);
++#if defined(AVP_XBOX360)
++				avp360_FixPropData(pProp->m_Data, propLen, false);	// avp360: mundo little-endian
++#endif
+ 			}
+ 
+ 			pProp->m_pNext = g_pServerMgr->m_pCurProps;
+diff -ruN --binary a/src/shared/collision.cpp b/src/shared/collision.cpp
+--- a/src/shared/collision.cpp	2026-11-05 12:26:25.652955549 -0300
++++ b/src/shared/collision.cpp	2026-11-05 12:26:25.854579674 -0300
+@@ -110,6 +110,12 @@
+ // The radius of the moving box (from its dims).
+ // GLOBAL: LITHTECH 0x004e0494
+ extern float g_BoxRadius;
++#if defined(AVP_XBOX360)
++// avp360: no lithtech.exe estes ficam em outro objeto ainda nao reconstruido; aqui e o unico usuario.
++PhysicsSphere g_StartSphere, g_EndSphere;
++LTVector g_MovePts[2][NUM_BOX_POINTS];
++float g_BoxRadius;
++#endif
+ 
+ // Profiling.
+ // GLOBAL: LITHTECH 0x004e24ac
+diff -ruN --binary a/src/shared/dtxmgr.cpp b/src/shared/dtxmgr.cpp
+--- a/src/shared/dtxmgr.cpp	2026-11-05 12:26:25.652760360 -0300
++++ b/src/shared/dtxmgr.cpp	2026-11-05 12:26:25.824945450 -0300
+@@ -191,6 +191,17 @@
+ 	uint32 y, size;
+ 
+ 	STREAM_READ(hdr);
++#if defined(AVP_XBOX360)
++	// avp360: o DTX e little-endian; m_Extra (bytes) e m_CommandString ficam como estao.
++	avp360_FixEndian(hdr.m_ResType);
++	avp360_FixEndian(hdr.m_Version);
++	avp360_FixEndian(hdr.m_BaseWidth);
++	avp360_FixEndian(hdr.m_BaseHeight);
++	avp360_FixEndian(hdr.m_nMipmaps);
++	avp360_FixEndian(hdr.m_nSections);
++	avp360_FixEndian(hdr.m_IFlags);
++	avp360_FixEndian(hdr.m_UserFlags);
++#endif
+ 	if(hdr.m_ResType != LT_RESTYPE_DTX)
+ 	{
+ 		RETURN_ERROR(1, dtx_Create, LT_INVALIDDATA);
+@@ -231,12 +242,26 @@
+ 				dtx_ReadOrSkip(bSkipImageData, pStream,
+ 					&pMip->m_Data[y*pMip->m_Pitch],
+ 					pMip->m_Width * sizeof(uint32));
++#if defined(AVP_XBOX360)
++				// Pixels de 32 bits: palavras little-endian (B, G, R, A na memoria) -> 0xAARRGGBB nativo.
++				uint32 *pRow = (uint32*)&pMip->m_Data[y*pMip->m_Pitch];
++				for(uint32 x=0; x < pMip->m_Width; x++)
++					avp360_FixEndian(pRow[x]);
++#endif
+ 			}
+ 		}
+ 		else
+ 		{
+ 			size = CalcImageSize(hdr.GetBPPIdent(), pMip->m_Width, pMip->m_Height);
+ 			dtx_ReadOrSkip(bSkipImageData, pStream, pMip->m_Data, size);
++#if defined(AVP_XBOX360)
++			// avp360: pixels de 16 bits little-endian -> nativos (DXT fica como esta: os blocos sao lidos em LE).
++			if(hdr.GetBPPIdent() == BPP_16)
++			{
++				for(uint32 p=0; p + 1 < size; p += 2)
++					avp360_ByteSwap(&pMip->m_Data[p], 2);
++			}
++#endif
+ 		}
+ 	}
+ 
+@@ -248,6 +273,9 @@
+ 			for(i=0; i < hdr.m_nSections; i++)
+ 			{
+ 				STREAM_READ(sectionHeader);
++#if defined(AVP_XBOX360)
++				avp360_FixEndian(sectionHeader.m_DataLen);
++#endif
+ 				pSection = (DtxSection*)dalloc((sizeof(DtxSection)-1) + sectionHeader.m_DataLen);
+ 				memcpy(&pSection->m_Header, &sectionHeader, sizeof(pSection->m_Header));
+ 				pStream->Read(pSection->m_Data, sectionHeader.m_DataLen);
+diff -ruN --binary a/src/shared/lmessage.cpp b/src/shared/lmessage.cpp
+--- a/src/shared/lmessage.cpp	2026-11-05 12:26:25.653129070 -0300
++++ b/src/shared/lmessage.cpp	2026-11-05 12:26:25.778368401 -0300
+@@ -480,6 +480,14 @@
+ 	return LT_OK;
+ }
+ 
++#if defined(AVP_XBOX360)
++// avp360: ainda nao reconstruida no decomp. Uma mensagem sem pacote e invalida.
++LTBOOL LMessageImpl::IsInvalid()
++{
++	return m_pPacket == LTNULL;
++}
++#endif
++
+ // FUNCTION: LITHTECH 0x00446100
+ LTRESULT LMessageImpl::GetStatus(uint32 &flags)
+ {
+diff -ruN --binary a/src/shared/pixelformat.cpp b/src/shared/pixelformat.cpp
+--- a/src/shared/pixelformat.cpp	2026-11-05 12:26:25.652725054 -0300
++++ b/src/shared/pixelformat.cpp	2026-11-05 12:26:25.843476427 -0300
+@@ -2,6 +2,9 @@
+ // Talon differences: FMConvertRequest::m_Flags (CONVERT_OR) instead of a transparent color,
+ // no 24-bit format, no m_nBPP (byte sizes come from tables), out-of-line PFormat accessors.
+ #include "ltbasedefs.h"
++// avp360: os blocos DXT sao little-endian (no x86, estes sao os *(uint16*) / *(uint32*) originais).
++#define PF_LE16(p) ((uint16)(((const uint8*)(p))[0] | (((const uint8*)(p))[1] << 8)))
++#define PF_LE32(p) ((uint32)(((const uint8*)(p))[0] | (((const uint8*)(p))[1] << 8) | (((const uint8*)(p))[2] << 16) | ((uint32)((const uint8*)(p))[3] << 24)))
+ #include "pixelformat.h"
+ #include <string.h>
+ 
+@@ -796,8 +799,8 @@
+ 			pSrcPos16 = (uint16*)pSrcPos8;
+ 
+ 			// 16-bit 565 values.
+-			val1 = *pSrcPos16;
+-			val2 = *(pSrcPos16 + 1);
++			val1 = PF_LE16(pSrcPos16);
++			val2 = PF_LE16(pSrcPos16 + 1);
+ 
+ 			// Convert to base format.
+ 			cc16toBF.Convert((uint8*)&val1, (uint8*)&ident32[0]);
+@@ -844,7 +847,7 @@
+ 			ccBFtoGeneric.Convert((uint8*)&ident32[3], (uint8*)&abstract.m_Ident[3]);
+ 
+ 			// The next 4 bytes are the pixel data.
+-			blockData = *((uint32*)(pSrcPos8 + 4));
++			blockData = PF_LE32(pSrcPos8 + 4);
+ 			pDestPos = pRequest->m_pDest +
+ 				((yBlock<<2) * pRequest->m_DestPitch) + (xBlock<<(2+A::GetShift()));
+ 
+@@ -899,8 +902,8 @@
+ 					ALPHAVAL[7] = pAlphaScaleTable[ALPHAVAL[7]] << alphaShift;
+ 
+ 					// 6 bytes for the pixels (3 bits per pixel, 16 pixels).
+-					alphaData[0] = *((uint32*)(pSrcPos8+2));
+-					alphaData[1] = *((uint16*)(pSrcPos8+6));
++					alphaData[0] = PF_LE32(pSrcPos8 + 2);
++					alphaData[1] = PF_LE16(pSrcPos8 + 6);
+ 
+ 					// Row 1.
+ 						READROW_NORMAL(0, 0);
+@@ -926,10 +929,10 @@
+ 				else
+ 				{
+ 					// 2 rows worth.
+-					blockData = *((uint32*)pSrcPos8);
++					blockData = PF_LE32(pSrcPos8);
+ 					DECODE_ALPHA_2ROWS();
+ 
+-					blockData = *((uint32*)(pSrcPos8 + 4));
++					blockData = PF_LE32(pSrcPos8 + 4);
+ 					DECODE_ALPHA_2ROWS();
+ 				}
+ 			}
+diff -ruN --binary a/src/shared/rotation_stream.cpp b/src/shared/rotation_stream.cpp
+--- a/src/shared/rotation_stream.cpp	2026-11-05 12:26:25.653368002 -0300
++++ b/src/shared/rotation_stream.cpp	2026-11-05 12:26:25.856928822 -0300
+@@ -9,4 +9,7 @@
+ 	pStream->Read(&rot.m_Quat[1], sizeof(float));
+ 	pStream->Read(&rot.m_Quat[2], sizeof(float));
+ 	pStream->Read(&rot.m_Quat[3], sizeof(float));
++#if defined(AVP_XBOX360)
++	avp360_FixEndian(rot.m_Quat);	// avp360: arquivos little-endian
++#endif
+ }
+diff -ruN --binary a/src/sound/wave.cpp b/src/sound/wave.cpp
+--- a/src/sound/wave.cpp	2026-11-05 12:26:25.653532559 -0300
++++ b/src/sound/wave.cpp	2026-11-05 12:26:25.738437139 -0300
+@@ -4,6 +4,13 @@
+ #include "wave.h"
+ #include "iltstream.h"
+ 
++// avp360: os cabecalhos WAV sao little-endian (os tags mmioFOURCC tambem: com a troca, as comparacoes valem).
++#if defined(AVP_XBOX360)
++#define WAVE_LE(x) avp360_FixEndian(x)
++#else
++#define WAVE_LE(x)
++#endif
++
+ static const uint32 s_tagRIFF = mmioFOURCC('R', 'I', 'F', 'F');
+ static const uint32 s_tagFMT  = mmioFOURCC('f', 'm', 't', ' ');
+ static const uint32 s_tagDATA = mmioFOURCC('d', 'a', 't', 'a');
+@@ -35,6 +42,8 @@
+ 			break;
+ 		if (inStream.Read(&dwTypeLength, sizeof(uint32)) != LT_OK)
+ 			break;
++		WAVE_LE(dwType);
++		WAVE_LE(dwTypeLength);
+ 		if (!ReadChunk(inStream, dwType, dwTypeLength, 0, waveHeader))
+ 			break;
+ 	}
+@@ -73,6 +82,13 @@
+ 				if (dwLength < nSizeToRead)
+ 					nSizeToRead = dwLength;
+ 				inStream.Read(&waveHeader.m_WaveFormat, nSizeToRead);
++				WAVE_LE(waveHeader.m_WaveFormat.wFormatTag);
++				WAVE_LE(waveHeader.m_WaveFormat.nChannels);
++				WAVE_LE(waveHeader.m_WaveFormat.nSamplesPerSec);
++				WAVE_LE(waveHeader.m_WaveFormat.nAvgBytesPerSec);
++				WAVE_LE(waveHeader.m_WaveFormat.nBlockAlign);
++				WAVE_LE(waveHeader.m_WaveFormat.wBitsPerSample);
++				WAVE_LE(waveHeader.m_WaveFormat.cbSize);
+ 			}
+ 
+ 			break;
+@@ -112,6 +128,7 @@
+ 				if (waveHeader.m_WaveFormat.wFormatTag == WAVE_FORMAT_IMA_ADPCM)
+ 				{
+ 					inStream.Read(&waveHeader.m_dwSamples, sizeof(uint32));
++					WAVE_LE(waveHeader.m_dwSamples);
+ 				}
+ 			}
+ 
+@@ -126,6 +143,8 @@
+ 				if (dwLength < nSizeToRead)
+ 					nSizeToRead = dwLength;
+ 				inStream.Read(&waveHeader.m_lith, nSizeToRead);
++				WAVE_LE(waveHeader.m_lith.m_dwSoundBufferFlags);
++				WAVE_LE(waveHeader.m_lith.m_fPitchMod);
+ 			}
+ 
+ 			break;
+@@ -138,6 +157,7 @@
+ 
+ 			// Read number of cue points.
+ 			inStream.Read(&dwNumCuePoints, sizeof(uint32));
++			WAVE_LE(dwNumCuePoints);
+ 			dwNewLength = dwLength - sizeof(uint32);
+ 
+ 			if (dwNumCuePoints > 0)
+@@ -146,6 +166,9 @@
+ 				if (dwLength < dwNewLength)
+ 					nSizeToRead = dwNewLength;
+ 				inStream.Read(&cuePoint, nSizeToRead);
++				WAVE_LE(cuePoint.m_dwName);
++				WAVE_LE(cuePoint.m_dwPosition);
++				WAVE_LE(cuePoint.m_fccChunk);
+ 				dwNewLength -= nSizeToRead;
+ 
+ 				// Make sure the cue point is for the 'data' chunk.
+@@ -171,6 +194,8 @@
+ 				if (dwLength < nSizeToRead)
+ 					nSizeToRead = dwLength;
+ 				inStream.Read(&ltxt, nSizeToRead);
++				WAVE_LE(ltxt.m_dwName);
++				WAVE_LE(ltxt.m_dwSampleLength);
+ 
+ 				if (waveHeader.m_CuePoint.m_bValid && ltxt.m_dwName == waveHeader.m_CuePoint.m_dwName)
+ 				{
+@@ -187,6 +212,7 @@
+ 			uint32 dwForm;
+ 
+ 			inStream.Read(&dwForm, sizeof(uint32));
++			WAVE_LE(dwForm);
+ 
+ 			// Run through the tags.
+ 			while (inStream.GetPos() < dwEnd)
+@@ -196,6 +222,8 @@
+ 
+ 				inStream.Read(&dwType, sizeof(uint32));
+ 				inStream.Read(&dwLength, sizeof(uint32));
++				WAVE_LE(dwType);
++				WAVE_LE(dwLength);
+ 				if (!ReadChunk(inStream, dwType, dwLength, dwForm, waveHeader))
+ 					break;
+ 			}
+diff -ruN --binary a/src/world/de_mainworld.cpp b/src/world/de_mainworld.cpp
+--- a/src/world/de_mainworld.cpp	2026-11-05 12:26:25.653564597 -0300
++++ b/src/world/de_mainworld.cpp	2026-11-05 12:26:25.767454880 -0300
+@@ -790,6 +790,11 @@
+ 		{
+ 			pStream->Read(&pLeaf->m_Polies[k], 2);
+ 			pStream->Read((uint8*)&pLeaf->m_Polies[k] + 2, 2);
++#if defined(AVP_XBOX360)
++			// avp360: dois uint16 little-endian (LAPolyRef)
++			avp360_ByteSwap(&pLeaf->m_Polies[k], 2);
++			avp360_ByteSwap((uint8*)&pLeaf->m_Polies[k] + 2, 2);
++#endif
+ 		}
+ 
+ 		STREAM_READ(pLeaf->m_Unknown28);
+@@ -891,6 +896,10 @@
+ 			pAnimRef = &pPoly->m_pLMAnimRefs[k];
+ 			pStream->Read(pAnimRef, 2);
+ 			pStream->Read((uint8*)pAnimRef + 2, 2);
++#if defined(AVP_XBOX360)
++			avp360_ByteSwap(pAnimRef, 2);	// avp360: (animacao, entrada), dois uint16 little-endian
++			avp360_ByteSwap((uint8*)pAnimRef + 2, 2);
++#endif
+ 		}
+ 
+ 		STREAM_READ(surfaceIndex);
+@@ -1215,7 +1224,12 @@
+ 				else if (propType == PT_STRING)
+ 					pStream->ReadString(propData, sizeof(propData));
+ 				else
++					{
+ 					pStream->Read(propData, propDataLen);
++#if defined(AVP_XBOX360)
++					avp360_FixPropData(propData, propDataLen, false);	// avp360: mundo little-endian
++#endif
++				}
+ 
+ 				if (propType == PT_STRING && strncmp(name, "Object", 6) == 0)
+ 				{
+@@ -1268,7 +1282,12 @@
+ 			else if (propType == PT_STRING)
+ 				pStream->ReadString(propData, sizeof(propData));
+ 			else
++				{
+ 				pStream->Read(propData, propDataLen);
++#if defined(AVP_XBOX360)
++				avp360_FixPropData(propData, propDataLen, false);	// avp360: mundo little-endian
++#endif
++			}
+ 
+ 			if (propType == PT_STRING && strcmp(name, "Name") == 0)
+ 			{
+@@ -2082,6 +2101,9 @@
+ 	Term();
+ 
+ 	pStream->Read(m_Size, sizeof(m_Size));
++#if defined(AVP_XBOX360)
++	avp360_FixEndian(m_Size);	// avp360: arquivo little-endian
++#endif
+ 	m_XZSize = m_Size[0] * m_Size[1];
+ 	m_nBlocks = m_Size[0] * m_Size[1] * m_Size[2];
+ 	if (m_nBlocks)
+@@ -2096,6 +2118,10 @@
+ 
+ 	pStream->Read(&m_BlockSize, sizeof(m_BlockSize));
+ 	pStream->Read(&m_Origin, sizeof(m_Origin));
++#if defined(AVP_XBOX360)
++	avp360_FixEndian(m_BlockSize);
++	avp360_FixEndian(m_Origin);
++#endif
+ 
+ 	for (i=0; i < m_nBlocks; i++)
+ 	{
+@@ -2103,6 +2129,10 @@
+ 
+ 		pStream->Read(&pBlock->m_nNodes, sizeof(pBlock->m_nNodes));
+ 		pStream->Read(&pBlock->m_iRoot, sizeof(pBlock->m_iRoot));
++#if defined(AVP_XBOX360)
++		avp360_FixEndian(pBlock->m_nNodes);
++		avp360_FixEndian(pBlock->m_iRoot);
++#endif
+ 		if (pBlock->m_nNodes > 0)
+ 		{
+ 			pBlock->m_pNodes = dalloc(pBlock->m_nNodes * 6);
+@@ -2114,6 +2144,11 @@
+ 		}
+ 
+ 		pStream->Read(pBlock->m_pNodes, pBlock->m_nNodes * 6);
++#if defined(AVP_XBOX360)
++		// PBlockNode (collision.cpp): tres uint16
++		for (uint32 n = 0; n < (uint32)pBlock->m_nNodes * 3; n++)
++			avp360_ByteSwap((uint16*)pBlock->m_pNodes + n, 2);
++#endif
+ 	}
+ 
+ 	return LTTRUE;

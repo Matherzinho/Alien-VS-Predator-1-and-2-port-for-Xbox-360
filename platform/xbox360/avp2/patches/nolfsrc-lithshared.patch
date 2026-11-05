@@ -1,0 +1,49 @@
+diff -ruN --binary a/lithfontmgr/lithbitmapfont.cpp b/lithfontmgr/lithbitmapfont.cpp
+--- a/lithfontmgr/lithbitmapfont.cpp	2026-11-05 12:26:26.774330098 -0300
++++ b/lithfontmgr/lithbitmapfont.cpp	2026-11-05 12:26:27.096509007 -0300
+@@ -811,7 +811,8 @@
+ 
+ 	// Figure out which line we're currently drawing
+ 	LTFLOAT fTime = 0.0f;
+-	for (uint32 i = 0; i < m_lfFD->nNumLines; i++)
++	uint32 i; // avp360: escopo de for do VC6
++	for (i = 0; i < m_lfFD->nNumLines; i++)
+ 	{
+ 		if (m_dwFlags & LTF_TIMED_LETTERS)
+ 			fTime += m_lfFD->pTimes[i];
+diff -ruN --binary a/lithfontmgr/lithfontmgr.cpp b/lithfontmgr/lithfontmgr.cpp
+--- a/lithfontmgr/lithfontmgr.cpp	2026-11-05 12:26:26.774383242 -0300
++++ b/lithfontmgr/lithfontmgr.cpp	2026-11-05 12:26:27.093795385 -0300
+@@ -85,7 +85,8 @@
+ 
+ 	// Clear the font and cursor lists (loops, not memset: the second memset
+ 	// expansion schedules its lea differently from the shipped object)
+-	for (int i = 0; i < LTF_MGR_MAX_FONTS; i++)
++	int i; // avp360: escopo de for do VC6
++	for (i = 0; i < LTF_MGR_MAX_FONTS; i++)
+ 		m_pFontList[i] = LTNULL;
+ 
+ 	for (i = 0; i < LTF_MGR_MAX_CURSORS; i++)
+diff -ruN --binary a/lithfontmgr/lithsystemfont.cpp b/lithfontmgr/lithsystemfont.cpp
+--- a/lithfontmgr/lithsystemfont.cpp	2026-11-05 12:26:26.774399066 -0300
++++ b/lithfontmgr/lithsystemfont.cpp	2026-11-05 12:26:27.099302308 -0300
+@@ -429,7 +429,8 @@
+ 
+ 	// Figure out which line we're currently drawing
+ 	LTFLOAT fTime = 0.0f;
+-	for (uint32 i = 0; i < m_lfFD->nNumLines; i++)
++	uint32 i; // avp360: escopo de for do VC6
++	for (i = 0; i < m_lfFD->nNumLines; i++)
+ 	{
+ 		if (m_dwFlags & LTF_TIMED_LETTERS)
+ 			fTime += m_lfFD->pTimes[i];
+@@ -684,7 +685,8 @@
+ 	uint32 nTotalHeight = m_lfFD->nNumLines * m_nHeight;
+ 
+ 	uint32 nWidth = 0;
+-	for (uint32 i = 0; i < m_lfFD->nNumLines; i++)
++	uint32 i; // avp360: escopo de for do VC6
++	for (i = 0; i < m_lfFD->nNumLines; i++)
+ 	{
+ 		if (nWidth < m_lfFD->pWidths[i])
+ 			nWidth = m_lfFD->pWidths[i];

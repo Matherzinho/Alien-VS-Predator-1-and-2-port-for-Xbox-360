@@ -1,0 +1,762 @@
+diff -ruN '--exclude=.git' stage/src/engine/core/files.c nakedavp/src/engine/core/files.c
+--- a/src/engine/core/files.c	2026-11-05 08:49:53.253198200 -0300
++++ b/src/engine/core/files.c	2026-11-04 15:32:38.145961800 -0300
+@@ -764,7 +764,12 @@
+ 	SecondTex_Directory = "graphics/";
+ 	SecondSoundDir = "sound/";
+     
++#if defined(AVP_XBOX360)
++	/* Configuracoes e saves ficam em game:\avp1\.avp, ao lado dos dados. */
++	homedir = AVP1_GAME_ROOT;
++#else
+ 	homedir = getenv("HOME");
++#endif
+ 	if (homedir == NULL)
+ 		homedir = ".";
+     
+diff -ruN '--exclude=.git' stage/src/frontend/main.c nakedavp/src/frontend/main.c
+--- a/src/frontend/main.c	2026-11-05 08:49:53.718731600 -0300
++++ b/src/frontend/main.c	2026-11-05 08:49:38.282044300 -0300
+@@ -1,4 +1,7 @@
+-﻿#include <stdio.h>
++#ifndef AVP360_STEP
++#define AVP360_STEP(s)
++#endif
++#include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ #include <ctype.h>
+@@ -602,7 +605,14 @@
+ 
+ int InitSDL()
+ {
++#if defined(AVP_XBOX360)
++	/* SDL-xenon nao tem driver de video: a imagem sai por xenos_gl.c. */
++	if (!SDL_Init(SDL_INIT_EVENTS))
++		avp1_log("SDL_Init(EVENTS) falhou: %s", SDL_GetError());
++	if (0)
++#else
+ 	if (SDL_Init(SDL_INIT_VIDEO) < 0)
++#endif
+ 	{
+ 		fprintf(stderr, "SDL Init failed: %s\n", SDL_GetError());
+ 		exit(EXIT_FAILURE);
+@@ -691,6 +701,9 @@
+ 				}
+ 			}
+ 			SDL_free(gamepads);
++#if defined(AVP_XBOX360)
++			avp1_log("controles: %d gamepad(s), usando: %s", gamepad_count, gamepad ? SDL_GetGamepadName(gamepad) : "nenhum");
++#endif
+ 
+ 			/* Fall back to the raw SDL joystick API for older/unmapped devices. */
+ 			if (!gamepad)
+@@ -821,6 +834,37 @@
+ 	}
+ #endif
+ 
++#if defined(AVP_XBOX360)
++	static int xgl_ready;
++	if (!xgl_ready)
++	{
++		IngameKeyboardInput_ClearBuffer();
++		if (!xgl_open())
++		{
++			avp1_log("xgl_open falhou");
++			exit(EXIT_FAILURE);
++		}
++		load_ogl_functions(1);
++		xgl_ready = 1;
++		AppliedVideoMode = CurrentVideoMode;
++		xgl_screen_size(&ViewportWidth, &ViewportHeight);
++		pglViewport(0, 0, ViewportWidth, ViewportHeight);
++
++		pglGenTextures(1, &FullscreenTexture);
++		pglBindTexture(GL_TEXTURE_2D, FullscreenTexture);
++		pglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++		pglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++		pglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++		pglTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++		FullscreenTextureWidth = 1024;
++		FullscreenTextureHeight = 512;
++		pglTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, FullscreenTextureWidth, FullscreenTextureHeight, 0, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, NULL);
++	}
++	xgl_screen_size(&Width, &Height);
++	SetWindowSize(Width, Height, Width, Height);
++	xgl_screen_size(&ViewportWidth, &ViewportHeight);
++	pglViewport(0, 0, ViewportWidth, ViewportHeight);
++#else
+ 	if (window == NULL)
+ 	{
+ 		load_ogl_functions(0);
+@@ -927,6 +971,7 @@
+ 	SDL_GetWindowSizeInPixels(window, &ViewportWidth, &ViewportHeight);
+ 	if (pglViewport != NULL && ViewportWidth > 0 && ViewportHeight > 0)
+ 		pglViewport(0, 0, ViewportWidth, ViewportHeight);
++#endif
+ 
+ 	pglEnable(GL_BLEND);
+ 	pglBlendFunc(GL_SRC_ALPHA, GL_ONE);
+@@ -1319,6 +1364,62 @@
+ 	KeyboardInput[key] = press;
+ }
+ 
++#if defined(AVP_XBOX360)
++extern int AvP360_MenusActive(void);
++
++/* Controle do Xbox 360: analogico direito vira o mouselook; nos menus, direcional/analogico esquerdo viram as setas,
++ * A vira Enter e B vira Esc; Start e sempre Esc (abre e fecha o menu de pausa). */
++static void Xbox360PadKey(int key, int down, int *was)
++{
++	if (down != *was)
++		handle_keypress(key, key == KEY_CR ? 13 : 0, down);
++	*was = down;
++}
++
++static float Xbox360Stick(Sint16 v)
++{
++	const float dead = 7849.0f;
++	float f = (float)v;
++	float s = f < 0 ? -1.0f : 1.0f;
++	f = f < 0 ? -f : f;
++	if (f < dead)
++		return 0.0f;
++	f = (f - dead) / (32767.0f - dead);
++	if (f > 1.0f)
++		f = 1.0f;
++	return s * f * f;
++}
++
++static void Xbox360PadFrame(void)
++{
++	static int up, down, left, right, enter, esc, start;
++	if (!gamepad)
++		return;
++	const int menus = AvP360_MenusActive();
++	const Sint16 ly = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY);
++	const Sint16 lx = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX);
++	Xbox360PadKey(KEY_UP, menus && (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP) || ly < -20000), &up);
++	Xbox360PadKey(KEY_DOWN, menus && (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN) || ly > 20000), &down);
++	Xbox360PadKey(KEY_LEFT, menus && (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT) || lx < -20000), &left);
++	Xbox360PadKey(KEY_RIGHT, menus && (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT) || lx > 20000), &right);
++	Xbox360PadKey(KEY_CR, menus && SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_SOUTH), &enter);
++	Xbox360PadKey(KEY_ESCAPE, menus && SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_EAST), &esc);
++	Xbox360PadKey(KEY_ESCAPE, SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_START), &start);
++
++	if (menus)
++		return;
++	/* Mira: pixels de mouse por segundo com o analogico no fim do curso. */
++	const float speed_x = 1400.0f, speed_y = 900.0f;
++	const float dt = (float)NormalFrameTime / 65536.0f;
++	const float dx = Xbox360Stick(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTX)) * speed_x * dt;
++	const float dy = Xbox360Stick(SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY)) * speed_y * dt;
++	MouseDeltaX = dx;
++	MouseDeltaY = dy;
++	MouseVelX = DIV_FIXED((int)dx, NormalFrameTime);
++	MouseVelY = DIV_FIXED((int)dy, NormalFrameTime);
++}
++#endif
++
+ void CheckForWindowsMessages()
+ {
+ 	SDL_Event event;
+@@ -1528,6 +1629,12 @@
+ 					SDL_GAMEPAD_BUTTON_DPAD_UP, SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+ 					SDL_GAMEPAD_BUTTON_DPAD_LEFT, SDL_GAMEPAD_BUTTON_DPAD_RIGHT,
+ 					SDL_GAMEPAD_BUTTON_MISC1, SDL_GAMEPAD_BUTTON_TOUCHPAD};
++#if defined(AVP_XBOX360)
++				/* Botoes 15 e 16: LT e RT, que no SDL sao eixos. */
++				if (x >= 14)
++					pressed = SDL_GetGamepadAxis(gamepad, x == 14 ? SDL_GAMEPAD_AXIS_LEFT_TRIGGER : SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) > 8000;
++				else
++#endif
+ 				pressed = SDL_GetGamepadButton(gamepad, buttons[x]);
+ 			}
+ 			else if (joy && x < SDL_GetNumJoystickButtons(joy))
+@@ -1549,6 +1656,9 @@
+ 				KeyboardInput[KEY_JOYSTICK_BUTTON_1 + x] = 0;
+ 			}
+ 		}
++#if defined(AVP_XBOX360)
++		Xbox360PadFrame();
++#endif
+ 	}
+ 
+ 	// #warning Redo WantX, need to split it out better so fullscreen can temporary set relative without clobbering user setting
+@@ -1623,7 +1733,11 @@
+ #if !defined(NDEBUG)
+ 	check_for_errors();
+ #endif
++#if defined(AVP_XBOX360)
++	xgl_swap();
++#else
+ 	SDL_GL_SwapWindow(window);
++#endif
+ }
+ 
+ void FlipBuffers()
+@@ -1721,7 +1835,11 @@
+ 	check_for_errors();
+ #endif
+ 
++#if defined(AVP_XBOX360)
++	xgl_swap();
++#else
+ 	SDL_GL_SwapWindow(window);
++#endif
+ }
+ 
+ char *AvpCDPath = 0;
+@@ -1809,7 +1927,18 @@
+ 		}
+ 	}
+ #endif
++#if defined(AVP_XBOX360)
++	/* Tudo que o motor escreve em stderr/stdout (erros de RIF, arquivos que faltam) vai para game:\avp1_stderr.txt. */
++	if (freopen("game:\\avp1_stderr.txt", "w", stderr))
++		setvbuf(stderr, NULL, _IONBF, 0);
++	if (freopen("game:\\avp1_stdout.txt", "w", stdout))
++		setvbuf(stdout, NULL, _IOLBF, 0);
++	avp1_log("avp1 iniciando (NakedAVP %s)", AvPVersionString);
++	if (gamedatapath == NULL)
++		gamedatapath = AVP1_GAME_ROOT;
++#endif
+ 	InitGameDirectories(argv[0], gamedatapath);
++	AVP360_STEP("diretorios");
+ 
+ 	if (InitSDL() == -1)
+ 	{
+@@ -1819,6 +1948,7 @@
+ 	}
+ 
+ 	LoadCDTrackList();
++	AVP360_STEP("SDL e video");
+ 
+ 	SetFastRandom();
+ 
+@@ -1830,6 +1960,7 @@
+ 	ffInit("fastfile/ffinfo.txt", "fastfile/");
+ #endif
+ 	InitGame();
++	AVP360_STEP("InitGame");
+ 
+ 	WindowWidth = VideoModeList[CurrentVideoMode].w;
+ 	WindowHeight = VideoModeList[CurrentVideoMode].h;
+@@ -1837,26 +1968,32 @@
+ 	SetSoftVideoMode(640, 480, 16);
+ 
+ 	InitialVideoMode();
++	AVP360_STEP("modo de video");
+ 
+ 	/* Env_List can probably be removed */
+ 	Env_List[0]->main = LevelName;
+ 
+ 	InitialiseSystem();
+ 	InitialiseRenderer();
++	AVP360_STEP("renderizador");
+ 
+ 	LoadKeyConfiguration();
++	AVP360_STEP("controles");
+ 
+ 	SoundSys_Start();
++	AVP360_STEP("som");
+ 	if (WantCDRom)
+ 		CDDA_Start();
+ 
+ 	InitTextStrings();
++	AVP360_STEP("textos");
+ 
+ 	BuildMultiplayerLevelNameArray();
+ 
+ 	ChangeDirectDrawObject();
+ 	AvP.LevelCompleted = 0;
+ 	LoadSounds("PLAYER");
++	AVP360_STEP("sons do jogador");
+ 
+ 	/* is this still neccessary? */
+ 	AvP.CurrentEnv = AvP.StartingEnv = 0;
+@@ -1890,13 +2027,17 @@
+ 
+ 		start_of_loaded_shapes = load_precompiled_shapes();
+ 
++		AVP360_STEP("menus fechados: iniciando partida");
+ 		InitCharacter();
+ 
++		AVP360_STEP("carregando mapa");
+ 		LoadRifFile(); /* sets up a map */
++		AVP360_STEP("mapa carregado");
+ 
+ 		AssignAllSBNames();
+ 
+ 		StartGame();
++		AVP360_STEP("jogo iniciado");
+ 
+ 		ffcloseall();
+ 
+@@ -2052,5 +2193,10 @@
+ 	CDDA_End();
+ 	ClearMemoryPool();
+ 
++#if defined(AVP_XBOX360)
++	/* Sair do jogo volta para o menu do AvP360 (escolha entre AvP 1 e AvP 2). */
++	avp1_log("saindo: voltando ao menu");
++	xsdk_launch("game:\\AvP360.xex", NULL, 0);
++#endif
+ 	return 0;
+ }
+diff -ruN '--exclude=.git' stage/src/game/frontend/avp_menus.c nakedavp/src/game/frontend/avp_menus.c
+--- a/src/game/frontend/avp_menus.c	2026-11-05 08:49:55.556813200 -0300
++++ b/src/game/frontend/avp_menus.c	2026-11-04 15:32:38.175068100 -0300
+@@ -488,6 +488,15 @@
+ {
+ 	return (AvPMenus.MenusState == MENUSSTATE_INGAMEMENUS);
+ }
++
++#if defined(AVP_XBOX360)
++/* Para o controle: nos menus, direcional e A/B navegam (frontend/main.c, Xbox360PadFrame). */
++int AvP360_MenusActive(void)
++{
++	return AvPMenus.MenusState == MENUSSTATE_MAINMENUS || AvPMenus.MenusState == MENUSSTATE_INGAMEMENUS;
++}
++#endif
++
+ extern void AvP_UpdateMenus(void)
+ {
+ //      DrawAvPMenuGfx(AVPMENUGFX_BIG_AVP_LOGO,50,50,16384);
+diff -ruN '--exclude=.git' stage/src/game/platform/win32/avpchunk.cpp nakedavp/src/game/platform/win32/avpchunk.cpp
+--- a/src/game/platform/win32/avpchunk.cpp	2026-11-05 08:50:04.739894400 -0300
++++ b/src/game/platform/win32/avpchunk.cpp	2026-11-04 15:32:38.184792600 -0300
+@@ -292,6 +292,7 @@
+ 	weights=(AVP_Generator_Weighting*)new unsigned char[size];
+ 	memset(weights,0,sizeof(AVP_Generator_Weighting));
+ 	memcpy(weights,data,AVP_LE(int, 4, (data)));
++	avp_le_words(weights,AVP_LE(int, 4, (data)));
+ 
+ 	weights->data_size=size;
+ }
+@@ -562,6 +563,13 @@
+ 
+ 	settings=(AVP_Environment_Settings*)new unsigned char[size];
+ 	memcpy(settings,data,data_size);
++	avp_le_words(settings,data_size);
++	if(data_size>=20)
++	{
++		/* A quinta palavra (predator_pistol...spare_bits) e de campos de bits. */
++		uint32_t *bits=(uint32_t*)settings+4;
++		*bits=avp_bitfield_word(*bits);
++	}
+ 
+ 	if(settings->data_size<16)
+ 	{
+@@ -659,6 +667,7 @@
+ 	for(int i=0;i<num_decals;i++)
+ 	{
+ 		memcpy(buffer_ptr,data,loaded_decal_size);
++		avp_le_words(buffer_ptr,loaded_decal_size);
+ 		buffer_ptr+=decal_size;
+ 		data+=loaded_decal_size;
+ 	}
+diff -ruN '--exclude=.git' stage/src/game/platform/win32/ffread.cpp nakedavp/src/game/platform/win32/ffread.cpp
+--- a/src/game/platform/win32/ffread.cpp	2026-11-05 08:50:04.767621900 -0300
++++ b/src/game/platform/win32/ffread.cpp	2026-11-04 15:32:38.189299700 -0300
+@@ -314,6 +314,12 @@
+ 	READ_FILE(filename,(void)0,fclose(h),h,&total_headsize,4,bytes_read,0)
+ 	READ_FILE(filename,(void)0,fclose(h),h,&data_length,4,bytes_read,0)
+ 
++#if defined(AVP_XBOX360)
++	rffl_version = AVP_LE(uint32_t, 4, &rffl_version);
++	num_files = AVP_LE(uint32_t, 4, &num_files);
++	total_headsize = AVP_LE(uint32_t, 4, &total_headsize);
++	data_length = AVP_LE(uint32_t, 4, &data_length);
++#endif
+ 	length = data_length;
+ 		
+ 	if (strncmp(magic,"RFFL",4))
+diff -ruN '--exclude=.git' stage/src/game/platform/win32/usr_io.c nakedavp/src/game/platform/win32/usr_io.c
+--- a/src/game/platform/win32/usr_io.c	2026-11-05 08:49:56.511598200 -0300
++++ b/src/game/platform/win32/usr_io.c	2026-11-04 15:32:38.196997700 -0300
+@@ -625,6 +625,62 @@
+ 	KEY_TAB,
+ };
+ #endif
++#if defined(AVP_XBOX360)
++/* Controle do Xbox 360 como configuracao secundaria (a primaria continua a do teclado).
++ * Botoes (frontend/main.c): 1 A, 2 B, 3 X, 4 Y, 5 Back, 6 Start, 7 L3, 8 R3, 9 LB, 10 RB,
++ * 11 cima, 12 baixo, 13 esquerda, 14 direita, 15 LT, 16 RT. Analogico esquerdo anda; o direito mira. */
++#define XB_A KEY_JOYSTICK_BUTTON_1
++#define XB_B KEY_JOYSTICK_BUTTON_2
++#define XB_X KEY_JOYSTICK_BUTTON_3
++#define XB_Y KEY_JOYSTICK_BUTTON_4
++#define XB_BACK KEY_JOYSTICK_BUTTON_5
++#define XB_L3 KEY_JOYSTICK_BUTTON_7
++#define XB_R3 KEY_JOYSTICK_BUTTON_8
++#define XB_LB KEY_JOYSTICK_BUTTON_9
++#define XB_RB KEY_JOYSTICK_BUTTON_10
++#define XB_UP KEY_JOYSTICK_BUTTON_11
++#define XB_DOWN KEY_JOYSTICK_BUTTON_12
++#define XB_LEFT KEY_JOYSTICK_BUTTON_13
++#define XB_RIGHT KEY_JOYSTICK_BUTTON_14
++#define XB_LT KEY_JOYSTICK_BUTTON_15
++#define XB_RT KEY_JOYSTICK_BUTTON_16
++PLAYER_INPUT_CONFIGURATION DefaultMarineInputSecondaryConfig =
++{
++	KEY_VOID, KEY_VOID, KEY_VOID, KEY_VOID,	// Forward, Backward, Left, Right
++	KEY_VOID, KEY_VOID, KEY_VOID,			// Strafe, StrafeLeft, StrafeRight
++	KEY_VOID, KEY_VOID, XB_R3,				// LookUp, LookDown, CentreView
++	XB_L3, XB_B, XB_A,						// Walk, Crouch, Jump
++	XB_X,									// Operate
++	XB_RT, XB_LT,							// FirePrimaryWeapon, FireSecondaryWeapon
++	XB_Y, XB_LEFT, XB_DOWN,					// NextWeapon, PreviousWeapon, FlashbackWeapon
++	XB_LB, XB_RB, XB_UP, XB_RIGHT,			// ImageIntensifier, ThrowFlare, Jetpack, Taunt
++	KEY_VOID, KEY_VOID, KEY_VOID, XB_BACK,
++};
++PLAYER_INPUT_CONFIGURATION DefaultPredatorInputSecondaryConfig =
++{
++	KEY_VOID, KEY_VOID, KEY_VOID, KEY_VOID,
++	KEY_VOID, KEY_VOID, KEY_VOID,
++	KEY_VOID, KEY_VOID, XB_R3,
++	XB_L3, XB_B, XB_A,
++	XB_X,
++	XB_RT, XB_LT,
++	XB_Y, XB_LEFT, KEY_VOID,				// NextWeapon, PreviousWeapon, FlashbackWeapon
++	XB_RB, XB_LB, XB_UP, XB_DOWN,			// Cloak, CycleVisionMode, ZoomIn, ZoomOut
++	XB_RIGHT, KEY_VOID, KEY_VOID,			// GrapplingHook, RecallDisk, Taunt
++	KEY_VOID, KEY_VOID, KEY_VOID, XB_BACK,
++};
++PLAYER_INPUT_CONFIGURATION DefaultAlienInputSecondaryConfig =
++{
++	KEY_VOID, KEY_VOID, KEY_VOID, KEY_VOID,
++	KEY_VOID, KEY_VOID, KEY_VOID,
++	KEY_VOID, KEY_VOID, XB_R3,
++	XB_L3, XB_B, XB_A,
++	XB_X,
++	XB_RT, XB_LT,							// Garras, Cauda
++	XB_LB, XB_RIGHT,						// AlternateVision, Taunt
++	KEY_VOID, KEY_VOID, KEY_VOID, XB_BACK,
++};
++#else
+ PLAYER_INPUT_CONFIGURATION DefaultMarineInputSecondaryConfig =
+ {
+ 	KEY_VOID,			// Forward;
+@@ -741,6 +797,7 @@
+     {KEY_VOID},
+     {KEY_VOID}
+ };
++#endif
+ 
+ 
+ CONTROL_METHODS ControlMethods =
+@@ -773,12 +830,20 @@
+ 	0,//unsigned int AutoCentreOnMovement :1;
+ };
+ 
++#if defined(AVP_XBOX360)
++/* Analogico esquerdo: Y anda, X anda de lado (o direito mira pelo mouselook). */
++#define AVP360_JOY_ENABLED 1
++#define AVP360_JOY_HTURN 0
++#else
++#define AVP360_JOY_ENABLED 0
++#define AVP360_JOY_HTURN 1
++#endif
+ JOYSTICK_CONTROL_METHODS JoystickControlMethods =
+ {
+-	0,//unsigned int JoystickEnabled;
+-	
++	AVP360_JOY_ENABLED,//unsigned int JoystickEnabled;
++
+ 	1,//unsigned int JoystickVAxisIsMovement; // else it's looking
+-	1,//unsigned int JoystickHAxisIsTurning;  // else it's sidestepping
++	AVP360_JOY_HTURN,//unsigned int JoystickHAxisIsTurning;  // else it's sidestepping
+ 	0,//unsigned int JoystickFlipVerticalAxis;
+ 
+ 	0,//unsigned int JoystickPOVVAxisIsMovement; // else it's looking
+@@ -796,10 +861,10 @@
+ };
+ JOYSTICK_CONTROL_METHODS DefaultJoystickControlMethods =
+ {
+-	0,//unsigned int JoystickEnabled;
+-	
++	AVP360_JOY_ENABLED,//unsigned int JoystickEnabled;
++
+ 	1,//unsigned int JoystickVAxisIsMovement; // else it's looking
+-	1,//unsigned int JoystickHAxisIsTurning;  // else it's sidestepping
++	AVP360_JOY_HTURN,//unsigned int JoystickHAxisIsTurning;  // else it's sidestepping
+ 	0,//unsigned int JoystickFlipVerticalAxis;
+ 
+ 	0,//unsigned int JoystickPOVVAxisIsMovement; // else it's looking
+diff -ruN '--exclude=.git' stage/src/platform/win95/awtexld.cpp nakedavp/src/platform/win95/awtexld.cpp
+--- a/src/platform/win95/awtexld.cpp	2026-11-05 08:49:58.554695400 -0300
++++ b/src/platform/win95/awtexld.cpp	2026-11-04 15:32:38.212740000 -0300
+@@ -508,13 +508,13 @@
+ 		pixelFormat.validB = 1;
+ 		pixelFormat.texB = 1;
+ 		pixelFormat.bitsPerPixel = 32;
+-		pixelFormat.redLeftShift = 0;
+-		pixelFormat.greenLeftShift = 8;
+-		pixelFormat.blueLeftShift = 16;
++		pixelFormat.redLeftShift = AVP_TEX_RED_SHIFT;
++		pixelFormat.greenLeftShift = AVP_TEX_GREEN_SHIFT;
++		pixelFormat.blueLeftShift = AVP_TEX_BLUE_SHIFT;
+ 		pixelFormat.redRightShift = 0;
+ 		pixelFormat.greenRightShift = 0;
+ 		pixelFormat.blueRightShift = 0;
+-		pixelFormat.dwRGBAlphaBitMask = 0xFF000000;
++		pixelFormat.dwRGBAlphaBitMask = AVP_TEX_ALPHA_MASK;
+ 	}
+ }
+ 
+@@ -2098,13 +2098,13 @@
+ _pfP->alphaB = 0;
+ _pfP->validB = 1;
+ _pfP->bitsPerPixel = 32;
+-_pfP->redLeftShift = 0;
+-_pfP->greenLeftShift = 8;
+-_pfP->blueLeftShift = 16;
++_pfP->redLeftShift = AVP_TEX_RED_SHIFT;
++_pfP->greenLeftShift = AVP_TEX_GREEN_SHIFT;
++_pfP->blueLeftShift = AVP_TEX_BLUE_SHIFT;
+ _pfP->redRightShift = 0;
+ _pfP->greenRightShift = 0;
+ _pfP->blueRightShift = 0;
+-_pfP->dwRGBAlphaBitMask = 0xFF000000;
++_pfP->dwRGBAlphaBitMask = AVP_TEX_ALPHA_MASK;
+ 
+ 	return AW_TLE_OK;
+ }
+@@ -2197,13 +2197,13 @@
+ 	pixelFormat.validB = 1;
+ 	pixelFormat.texB = 0;
+ 	pixelFormat.bitsPerPixel = 32;
+-	pixelFormat.redLeftShift = 0;
+-	pixelFormat.greenLeftShift = 8;
+-	pixelFormat.blueLeftShift = 16;
++	pixelFormat.redLeftShift = AVP_TEX_RED_SHIFT;
++	pixelFormat.greenLeftShift = AVP_TEX_GREEN_SHIFT;
++	pixelFormat.blueLeftShift = AVP_TEX_BLUE_SHIFT;
+ 	pixelFormat.redRightShift = 0;
+ 	pixelFormat.greenRightShift = 0;
+ 	pixelFormat.blueRightShift = 0;
+-	pixelFormat.dwRGBAlphaBitMask = 0xFF000000;
++	pixelFormat.dwRGBAlphaBitMask = AVP_TEX_ALPHA_MASK;
+ 
+ 	va_list ap;
+ 	va_start(ap,_argFormatS);
+diff -ruN '--exclude=.git' stage/src/platform/win95/chunk.cpp nakedavp/src/platform/win95/chunk.cpp
+--- a/src/platform/win95/chunk.cpp	2026-11-05 08:50:00.922359400 -0300
++++ b/src/platform/win95/chunk.cpp	2026-11-04 15:32:38.219248400 -0300
+@@ -50,6 +50,7 @@
+ 	int sub_chunk_ln;
+ 
+ 	AVPReadFile(hand, (long*)&chunk_length, 4, &bytes_read, 0);
++	chunk_length = AVP_LE(int, 4, &chunk_length);
+ #endif
+ 
+ 	if ((init_file_pos + chunk_length) > file_length) return;
+@@ -75,6 +76,7 @@
+ 		SetFilePointer(hand, sub_chunk_ln - 12, 0, FILE_CURRENT);
+ #else
+ 		ok = AVPReadFile(hand, (long*)&sub_chunk_ln, 4, &bytes_read, 0);
++		sub_chunk_ln = AVP_LE(int, 4, &sub_chunk_ln);
+ 
+ 		AVPSetFilePointer(hand, sub_chunk_ln - 12, 0, FILE_CURRENT);
+ #endif
+diff -ruN '--exclude=.git' stage/src/platform/win95/chunk.hpp nakedavp/src/platform/win95/chunk.hpp
+--- a/src/platform/win95/chunk.hpp	2026-11-05 08:49:58.761608700 -0300
++++ b/src/platform/win95/chunk.hpp	2026-11-04 15:32:38.230349900 -0300
+@@ -397,9 +397,16 @@
+ //macros for use in chunk construction from buffer, assume buffer is called data
+ 
+ //read variable of type 'type'
++#if defined(AVP_XBOX360)
++/* Os RIFs sao little-endian (include/avp1_endian.h). */
++#define CHUNK_EXTRACT(var,type) \
++	var=avp_le_get<type>(data); \
++	data+=sizeof(type);
++#else
+ #define CHUNK_EXTRACT(var,type) \
+ 	var=*(type*)data; \
+ 	data+=sizeof(type);
++#endif
+ 
+ //read 4 byte aligned string
+ #define CHUNK_EXTRACT_STRING(var) { \
+diff -ruN '--exclude=.git' stage/src/platform/win95/huffman.cpp nakedavp/src/platform/win95/huffman.cpp
+--- a/src/platform/win95/huffman.cpp	2026-11-05 08:49:59.196983700 -0300
++++ b/src/platform/win95/huffman.cpp	2026-11-04 15:32:38.235857400 -0300
+@@ -398,6 +398,17 @@
+ extern char *HuffmanDecompress(const HuffmanPackage *inpackage)
+ {
+ 	unsigned char *uncompressedData = NULL;
++#if defined(AVP_XBOX360)
++	/* O cabecalho vem little-endian do arquivo; o decodificador le os campos como int. */
++	HuffmanPackage native;
++	memcpy(&native, inpackage, sizeof native);
++	native.CompressedDataSize = (int)avp_le32(&inpackage->CompressedDataSize);
++	native.UncompressedDataSize = (int)avp_le32(&inpackage->UncompressedDataSize);
++	for (int n = 0; n < MAX_DEPTH; n++)
++		native.CodelengthCount[n] = (int)avp_le32(&inpackage->CodelengthCount[n]);
++	const int *bitstream = (const int *)(inpackage + 1);
++	inpackage = &native;
++#endif
+ 	// Step 1: Make the decoding table
+ 	MakeHuffmanDecodeTable(inpackage->CodelengthCount, MAX_DEPTH, inpackage->ByteAssignment);
+ 
+@@ -405,7 +416,11 @@
+ 	uncompressedData = (unsigned char*)AllocateMemory(inpackage->UncompressedDataSize+16);
+ 	if (uncompressedData)
+ 	{
++#if defined(AVP_XBOX360)
++		HuffmanDecode(uncompressedData,bitstream,DecodeTable,inpackage->UncompressedDataSize);
++#else
+ 		HuffmanDecode(uncompressedData,(int*)(inpackage+1),DecodeTable,inpackage->UncompressedDataSize);
++#endif
+ 	}
+ 
+ 	return (char*)uncompressedData;	
+@@ -449,7 +464,12 @@
+             count = repcount;
+             do
+             {
++#if defined(AVP_XBOX360)
++                /* HuffmanDecode le a tabela byte a byte, como na memoria do x86. */
++                *outp  = (int)__builtin_bswap32((unsigned int)temp);
++#else
+                 *outp  = temp;
++#endif
+                 outp  += repspace;
+             }
+             while (--count);
+@@ -494,7 +514,11 @@
+             {
+             	bits   = (bits >> reserve) | (resbits << (32 - reserve));
+ 			}
++#if defined(AVP_XBOX360)
++            resbits    = avp_le32(source++);
++#else
+             resbits    = *source++;
++#endif
+             reserve    = 32;
+         }
+         bits           = (bits >> fill) | (resbits << (32 - fill));
+diff -ruN '--exclude=.git' stage/src/platform/win95/ltchunk.cpp nakedavp/src/platform/win95/ltchunk.cpp
+--- a/src/platform/win95/ltchunk.cpp	2026-11-05 08:50:01.301791700 -0300
++++ b/src/platform/win95/ltchunk.cpp	2026-11-04 15:32:38.246967200 -0300
+@@ -221,11 +221,12 @@
+ 
+ 	intensity_array = new int [num_vertices];
+ 
+-	int * cia = (int *)data, * ia = intensity_array;
++	const char * cia = data;
++	int * ia = intensity_array;
+ 
+-	for (int i = num_vertices; i; i--)
++	for (int i = num_vertices; i; i--, cia += 4)
+ 	{
+-		*ia++ = *cia++;
++		*ia++ = AVP_LE(int, 4, cia);
+ 	}
+ }
+ 
+diff -ruN '--exclude=.git' stage/src/platform/win95/media.hpp nakedavp/src/platform/win95/media.hpp
+--- a/src/platform/win95/media.hpp	2026-11-05 08:49:59.393346300 -0300
++++ b/src/platform/win95/media.hpp	2026-11-04 15:32:38.251476800 -0300
+@@ -282,8 +282,13 @@
+ 		{
+ 			if (pThis->m_nReadBufPos + sizeof(TYPE) <= pThis->m_nBufSize)
+ 			{
++#if defined(AVP_XBOX360)
++				/* Le como o x86 leria (little-endian); quem precisa de big-endian (IFF) ja troca por conta. */
++				*p = avp_le_get<TYPE>(static_cast<char const *>(pThis->m_pReadBuffer) + pThis->m_nReadBufPos/sizeof(char));
++#else
+ 				*p = *reinterpret_cast<TYPE const *>(static_cast<char const *>(pThis->m_pReadBuffer) + pThis->m_nReadBufPos/sizeof(char));
+-				
++#endif
++
+ 				pThis->m_nReadBufPos += sizeof(TYPE);
+ 			}
+ 			else
+@@ -292,7 +297,11 @@
+ 				pThis->m_pReadBuffer = pThis->GetReadBuffer(&pThis->m_nBufSize,pThis->m_nDefBufSize);
+ 				if (sizeof(TYPE) <= pThis->m_nBufSize)
+ 				{
++#if defined(AVP_XBOX360)
++					*p = avp_le_get<TYPE>(pThis->m_pReadBuffer);
++#else
+ 					*p = *static_cast<TYPE const *>(pThis->m_pReadBuffer);
++#endif
+ 					pThis->m_nReadBufPos = sizeof(TYPE);
+ 				}
+ 				else
+diff -ruN '--exclude=.git' stage/src/platform/win95/mishchnk.cpp nakedavp/src/platform/win95/mishchnk.cpp
+--- a/src/platform/win95/mishchnk.cpp	2026-11-05 08:50:01.637916100 -0300
++++ b/src/platform/win95/mishchnk.cpp	2026-11-04 15:32:38.258983800 -0300
+@@ -473,7 +473,7 @@
+ 			return;
+ 		}	
+ 		uncompressedData = HuffmanDecompress((HuffmanPackage*)buffer); 		
+-		file_size = ((HuffmanPackage*)buffer)->UncompressedDataSize;
++		file_size = AVP_LE(int, 4, &((HuffmanPackage*)buffer)->UncompressedDataSize);
+ 		
+ 		delete [] buffer; // kill the buffer the compressed file was loaded into
+ 
+@@ -487,6 +487,7 @@
+ 			return;
+ 		}	
+ 
++		file_size_from_file = AVP_LE(int, 4, &file_size_from_file);
+ 		if (file_size != file_size_from_file) {
+ 			error_code = CHUNK_FAILED_ON_LOAD_NOT_RECOGNISED;
+ 			fclose(rif_file);
+@@ -1908,7 +1909,7 @@
+ 			return;
+ 		}	
+ 		uncompressedData = HuffmanDecompress((HuffmanPackage*)buffer); 		
+-		file_size = ((HuffmanPackage*)buffer)->UncompressedDataSize;
++		file_size = AVP_LE(int, 4, &((HuffmanPackage*)buffer)->UncompressedDataSize);
+ 		
+ 		delete [] buffer; // kill the buffer the compressed file was loaded into
+ 
+@@ -1926,6 +1927,7 @@
+ 		}	
+ 
+ 		//and compare with the actual file size
++		file_size_from_file = AVP_LE(int, 4, &file_size_from_file);
+ 		if (file_size != file_size_from_file) {
+ 			error_code = CHUNK_FAILED_ON_LOAD_NOT_RECOGNISED;
+ 			fclose(rif_file);
+diff -ruN '--exclude=.git' stage/src/platform/win95/shpchunk.cpp nakedavp/src/platform/win95/shpchunk.cpp
+--- a/src/platform/win95/shpchunk.cpp	2026-11-05 08:50:04.368019200 -0300
++++ b/src/platform/win95/shpchunk.cpp	2026-11-04 15:32:38.267073500 -0300
+@@ -3310,7 +3310,8 @@
+ 	if(block_size)
+ 	{
+ 		memory_block=new unsigned int[block_size];
+-		memcpy(memory_block,data,block_size*4);	
++		memcpy(memory_block,data,block_size*4);
++		avp_le_words(memory_block,block_size*4);
+ 		data+=block_size*4;
+ 	}
+ 	else
+@@ -3324,8 +3325,9 @@
+ 	if(num_extra_data)
+ 	{
+ 		extra_data=new int[num_extra_data];
+-		memcpy(extra_data,data,num_extra_data*4);	
+-	}	
++		memcpy(extra_data,data,num_extra_data*4);
++		avp_le_words(extra_data,num_extra_data*4);
++	}
+ 	else
+ 	{
+ 		extra_data=0;
+diff -ruN '--exclude=.git' stage/src/platform/win95/sprchunk.cpp nakedavp/src/platform/win95/sprchunk.cpp
+--- a/src/platform/win95/sprchunk.cpp	2026-11-05 08:50:04.499000100 -0300
++++ b/src/platform/win95/sprchunk.cpp	2026-11-04 15:32:38.279130900 -0300
+@@ -219,6 +219,7 @@
+ 		return;
+ 	}	
+ 
++	file_size_from_file = AVP_LE(int, 4, &file_size_from_file);
+ 	if (file_size != file_size_from_file) {
+ 		error_code = CHUNK_FAILED_ON_LOAD_NOT_RECOGNISED;
+ 		fclose(rif_file);

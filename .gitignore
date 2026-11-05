@@ -1,0 +1,44 @@
+# Saidas de build
+build/
+build-work/
+*.xex
+*.obj
+*.o
+*.a
+*.pdb
+*.ilk
+*.idb
+*.ppm
+avp_menu.bin
+avp_opcoes.cfg
+
+# Dados e midia dos jogos: cada um usa os seus (nunca vao para o repositorio)
+AvP360_Xbox360/
+AvP_disc1.iso
+AvP_disc2/
+*.iso
+Aliens Versus Predator 2 (Gold Edition)/
+*.rez
+*.REZ
+*.ren
+*.r[0-9][0-9]
+
+# Codigo de terceiros: o build.sh baixa os repositorios publicos no commit fixo e aplica platform/xbox360/avp2/patches/
+NOLF-Reconstructed-master/
+nolfsrc-master/
+NOLFSource003.exe
+httpsgithub.com*.txt
+
+# Codigo-fonte oficial do AvP2 v1.0.9.6 e ferramentas da Monolith: a licenca proibe redistribuir; cada um usa o seu
+proj/
+Lith22tools/
+AvP2 Source EULA.doc
+
+# Fonte do AvP 1 da Rebellion de uma tentativa anterior (o avp1.xex usa o NakedAVP, baixado pelo build.sh)
+3dc/
+AvP_vc/
+AvP.dsp
+AvP.dsw
+AvP.sln
+AvP.vcproj
+License.txt

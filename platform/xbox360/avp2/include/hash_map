@@ -1,0 +1,5 @@
+// avp360: <hash_map> do STLport/SGI que o AvP2 usava, sobre o __gnu_cxx::hash_map do GCC.
+#ifndef AVP360_HASH_MAP
+#define AVP360_HASH_MAP
+#include "avp360_hash.h"
+#endif
